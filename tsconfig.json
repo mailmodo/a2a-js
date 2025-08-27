@@ -1,12 +1,13 @@
 {
   "compilerOptions": {
-    "target": "es2022",
-    "module": "NodeNext",
+    "target": "es6",
+    "module": "CommonJS",
     "skipLibCheck": true,
     "rootDir": ".",
     "outDir": "build",
     "sourceMap": true,
     "declaration": true,
+    "moduleResolution": "node",
     "esModuleInterop": true, // Often helpful with NodeNext
     "resolveJsonModule": true // Good practice for importing JSON if needed
   },
