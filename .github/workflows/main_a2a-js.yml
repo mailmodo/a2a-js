@@ -1,0 +1,52 @@
+# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
+# More GitHub Actions for Azure: https://github.com/Azure/actions
+
+name: Check and publish service library
+
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+        types: [opened, synchronize, reopened]
+        branches:
+            - main
+concurrency: 
+    group: ${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    check-test-and-publish:
+        runs-on: ubuntu-latest
+        environment: publish-to-npmjs
+        timeout-minutes: 5
+        steps:
+            - uses: actions/checkout@master
+              with:
+                  persist-credentials: false
+
+            - name: Set up Node.js version
+              uses: actions/setup-node@v1
+              with:
+                  node-version: '18.x'
+
+            - name: Install & Run ESLint and TS checks
+              run: |
+
+                  npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_AUTH_TOKEN }}
+                  npm config set @taskforcesh:registry=https://npm.taskforce.sh/
+                  npm config set //npm.taskforce.sh/:_authToken=${{ secrets.TASKFORCE_BULLMQ_TOKEN }}
+                  npm ci
+                  npm run build
+                  
+            - name: 'Dry Run Publish to NPMjs'
+              if: github.event_name != 'push'
+              run: |
+                  npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_AUTH_TOKEN }}
+                  npm publish --dry-run
+
+            - name: 'Publish to NPMjs'
+              if: github.event_name == 'push'
+              run: |
+                  npm config set //registry.npmjs.org/:_authToken=${{ secrets.NPM_AUTH_TOKEN }}
+                  npm publish
