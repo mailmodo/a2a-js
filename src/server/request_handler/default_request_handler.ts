@@ -80,6 +80,10 @@ export class DefaultRequestHandler implements A2ARequestHandler {
                 // Throw an error that conforms to the JSON-RPC Invalid Request error specification.
                 throw A2AError.invalidRequest(`Task ${task.id} is in a terminal state (${task.status.state}) and cannot be modified.`)
             }
+
+            // Add incomingMessage to history and save the task.
+            task.history = [...(task.history || []), incomingMessage];
+            await this.taskStore.save(task);
         }
 
         if (incomingMessage.referenceTaskIds && incomingMessage.referenceTaskIds.length > 0) {
