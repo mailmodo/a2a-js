@@ -1,6 +1,6 @@
 /**
  * Exports the common types.
- * 
+ *
  * Use the client/index.ts file to import the client-only codebase.
  * Use the server/index.ts file to import the server-only codebase.
  */
@@ -100,7 +100,15 @@ export type {
   DeleteTaskPushNotificationConfigSuccessResponse,
   FileBase,
   GetAuthenticatedExtendedCardSuccessResponse,
-  AgentCard1
+  AgentCard1,
+  GetTaskPushNotificationConfigSuccessResponse,
+  GetTaskSuccessResponse,
+  ImplicitOAuthFlow1,
+  ListTaskPushNotificationConfigSuccessResponse,
+  PasswordOAuthFlow1,
+  SendMessageSuccessResponse,
+  SendStreamingMessageSuccessResponse,
+  SetTaskPushNotificationConfigSuccessResponse,
 } from "./types.js";
 
 export type { A2AResponse } from "./a2a_response.js";
@@ -134,3 +142,5 @@ export * from "./client/auth-handler.js"; // Re-export all from auth-handler
 
 // Explicitly re-export server/express modules
 export { A2AExpressApp } from "./server/express/a2a_express_app.js";
+
+// export * from './types.js';
