@@ -25,3 +25,4 @@ export {
   ClientCallInput,
   ClientCallResult,
 } from './interceptors.js';
+export { ClientCallContext, ContextUpdate, ClientCallContextKey } from './context.js';
