@@ -1,12 +1,9 @@
-import { googleAI } from "@genkit-ai/googleai";
-import { genkit } from "genkit";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-
+import { googleAI } from '@genkit-ai/googleai';
+import { genkit } from 'genkit';
 export const ai = genkit({
   plugins: [googleAI()],
-  model: googleAI.model("gemini-2.0-flash"),
-  promptDir: dirname(fileURLToPath(import.meta.url)),
+  model: googleAI.model('gemini-2.0-flash'),
+  promptDir: __dirname,
 });
 
-export { z } from "genkit";
+export { z } from 'genkit';

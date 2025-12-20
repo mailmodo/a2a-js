@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es6",
+    "target": "es2022",
     "module": "CommonJS",
     "skipLibCheck": true,
     "rootDir": ".",
@@ -9,7 +9,9 @@
     "declaration": true,
     "moduleResolution": "node",
     "esModuleInterop": true, // Often helpful with NodeNext
-    "resolveJsonModule": true // Good practice for importing JSON if needed
+    "resolveJsonModule": true, // Good practice for importing JSON if needed
+    "noImplicitAny": true,
+    "useUnknownInCatchVariables": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
