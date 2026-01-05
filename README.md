@@ -1,4 +1,4 @@
-# A2A JavaScript SDK
+# A2A JavaScript SDK - Mailmodo Edition
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -13,25 +13,62 @@
 
 <!-- markdownlint-enable no-inline-html -->
 
+> **Note**: This is Mailmodo's customized fork of the [official A2A JavaScript SDK](https://github.com/a2aproject/a2a-js). Key differences:
+> - **Dual Module Support**: Supports both **CommonJS** and **ESM** (upstream only supports ESM)
+> - **Backwards Compatibility**: Works with older TypeScript configurations using `typesVersions`
+
 ## Installation
 
-You can install the A2A SDK using `npm`.
+You can install the Mailmodo A2A SDK using `npm`.
 
 ```bash
-npm install @a2a-js/sdk
+npm install @mailmodo/a2a
 ```
 
 ### For Server Usage
 
-If you plan to use the A2A server functionality (`A2AExpressApp`), you'll also need to install Express as it's a peer dependency:
+If you plan to use the Express integration (imports from `@mailmodo/a2a/server/express`) for A2A server, you'll also need to install Express as it's a peer dependency:
 
 ```bash
 npm install express
 ```
 
-You can also find JavaScript samples [here](https://github.com/google-a2a/a2a-samples/tree/main/samples/js).
+You can also find some samples [here](https://github.com/mailmodo/a2a-js/tree/main/src/samples).
 
 ---
+
+## Module System Compatibility
+
+This package supports both **CommonJS** and **ESM** module systems:
+
+### CommonJS (Node.js)
+```javascript
+const { Task, Message } = require('@mailmodo/a2a');
+const { DefaultRequestHandler } = require('@mailmodo/a2a/server');
+const { A2AExpressApp } = require('@mailmodo/a2a/server/express');
+const { ClientFactory } = require('@mailmodo/a2a/client');
+```
+
+### ESM (ES Modules)
+```javascript
+import { Task, Message } from '@mailmodo/a2a';
+import { DefaultRequestHandler } from '@mailmodo/a2a/server';
+import { A2AExpressApp } from '@mailmodo/a2a/server/express';
+import { ClientFactory } from '@mailmodo/a2a/client';
+```
+
+
+---
+
+## Compatibility
+
+This SDK implements the A2A Protocol Specification [`v0.3.0`](https://a2a-protocol.org/v0.3.0/specification).
+
+| Transport | Client | Server |
+| :--- | :---: | :---: |
+| **JSON-RPC** | ✅ | ✅ |
+| **HTTP+JSON/REST** | ✅ | ✅ |
+| **gRPC** | ❌ | ❌ |
 
 ## Quickstart
 
@@ -45,15 +82,15 @@ The core of an A2A server is the `AgentExecutor`, which contains your agent's lo
 // server.ts
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import type { AgentCard, Message } from '@a2a-js/sdk';
+import { AgentCard, Message, AGENT_CARD_PATH } from '@mailmodo/a2a';
 import {
   AgentExecutor,
   RequestContext,
   ExecutionEventBus,
   DefaultRequestHandler,
   InMemoryTaskStore,
-} from '@a2a-js/sdk/server';
-import { A2AExpressApp } from '@a2a-js/sdk/server/express';
+} from '@mailmodo/a2a/server';
+import { agentCardHandler, jsonRpcHandler, restHandler, UserBuilder } from '@mailmodo/a2a/server/express';
 
 // 1. Define your agent's identity card.
 const helloAgentCard: AgentCard = {
@@ -61,9 +98,17 @@ const helloAgentCard: AgentCard = {
   description: 'A simple agent that says hello.',
   protocolVersion: '0.3.0',
   version: '0.1.0',
-  url: 'http://localhost:4000/', // The public URL of your agent server
+  url: 'http://localhost:4000/a2a/jsonrpc', // The public URL of your agent server
   skills: [{ id: 'chat', name: 'Chat', description: 'Say hello', tags: ['chat'] }],
-  // --- Other AgentCard fields omitted for brevity ---
+  capabilities: {
+    pushNotifications: false,
+  },
+  defaultInputModes: ['text'],
+  defaultOutputModes: ['text'],
+  additionalInterfaces: [
+    { url: 'http://localhost:4000/a2a/jsonrpc', transport: 'JSONRPC' }, // Default JSON-RPC transport
+    { url: 'http://localhost:4000/a2a/rest', transport: 'HTTP+JSON' }, // HTTP+JSON/REST transport
+  ],
 };
 
 // 2. Implement the agent's logic.
@@ -96,27 +141,33 @@ const requestHandler = new DefaultRequestHandler(
   agentExecutor
 );
 
-const appBuilder = new A2AExpressApp(requestHandler);
-const expressApp = appBuilder.setupRoutes(express());
+const app = express();
 
-expressApp.listen(4000, () => {
+app.use(`/${AGENT_CARD_PATH}`, agentCardHandler({ agentCardProvider: requestHandler }));
+app.use('/a2a/jsonrpc', jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
+app.use('/a2a/rest', restHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication }));
+
+app.listen(4000, () => {
   console.log(`🚀 Server started on http://localhost:4000`);
 });
 ```
 
 ### Client: Sending a Message
 
-The `A2AClient` makes it easy to communicate with any A2A-compliant agent.
+The [`ClientFactory`](src/client/factory.ts) makes it easy to communicate with any A2A-compliant agent.
 
 ```typescript
 // client.ts
-import { A2AClient, SendMessageSuccessResponse } from '@a2a-js/sdk/client';
-import { Message, MessageSendParams } from '@a2a-js/sdk';
+import { ClientFactory } from '@mailmodo/a2a/client';
+import { Message, MessageSendParams, SendMessageSuccessResponse } from '@mailmodo/a2a';
 import { v4 as uuidv4 } from 'uuid';
 
 async function run() {
-  // Create a client pointing to the agent's Agent Card URL.
-  const client = await A2AClient.fromCardUrl('http://localhost:4000/.well-known/agent-card.json');
+  const factory = new ClientFactory();
+
+  // createFromUrl accepts baseUrl and optional path,
+  // (the default path is /.well-known/agent-card.json)
+  const client = await factory.createFromUrl('http://localhost:4000');
 
   const sendParams: MessageSendParams = {
     message: {
@@ -127,13 +178,12 @@ async function run() {
     },
   };
 
-  const response = await client.sendMessage(sendParams);
-
-  if ('error' in response) {
-    console.error('Error:', response.error.message);
-  } else {
-    const result = (response as SendMessageSuccessResponse).result as Message;
+  try {
+    const response = await client.sendMessage(sendParams);
+    const result = response as Message;
     console.log('Agent response:', result.parts[0].text); // "Hello, world!"
+  } catch(e) {
+    console.error('Error:', e);
   }
 }
 
@@ -152,7 +202,7 @@ This agent creates a task, attaches a file artifact to it, and marks it as compl
 
 ```typescript
 // server.ts
-import { Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk';
+import { Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@mailmodo/a2a';
 // ... other imports from the quickstart server ...
 
 class TaskExecutor implements AgentExecutor {
@@ -209,25 +259,25 @@ The client sends a message and receives a `Task` object as the result.
 
 ```typescript
 // client.ts
-import { A2AClient, SendMessageSuccessResponse } from '@a2a-js/sdk/client';
-import { Message, MessageSendParams, Task } from '@a2a-js/sdk';
+import { ClientFactory } from '@mailmodo/a2a/client';
+import { Message, MessageSendParams, SendMessageSuccessResponse, Task } from '@mailmodo/a2a';
 // ... other imports ...
 
-const client = await A2AClient.fromCardUrl('http://localhost:4000/.well-known/agent-card.json');
+const factory = new ClientFactory();
 
-const response = await client.sendMessage({
-  message: {
-    messageId: uuidv4(),
-    role: 'user',
-    parts: [{ kind: 'text', text: 'Do something.' }],
-    kind: 'message',
-  },
-});
+// createFromUrl accepts baseUrl and optional path,
+// (the default path is /.well-known/agent-card.json)
+const client = await factory.createFromUrl('http://localhost:4000');
 
-if ('error' in response) {
-  console.error('Error:', response.error.message);
-} else {
-  const result = (response as SendMessageSuccessResponse).result;
+try {
+  const result = await client.sendMessage({
+    message: {
+      messageId: uuidv4(),
+      role: 'user',
+      parts: [{ kind: 'text', text: 'Do something.' }],
+      kind: 'message',
+    },
+  });
 
   // Check if the agent's response is a Task or a direct Message.
   if (result.kind === 'task') {
@@ -242,6 +292,8 @@ if ('error' in response) {
     const message = result as Message;
     console.log('Received direct message:', message.parts[0].text);
   }
+} catch (e) {
+  console.error('Error:', e);
 }
 ```
 
@@ -249,38 +301,49 @@ if ('error' in response) {
 
 ## Client Customization
 
-You can provide a custom `fetch` implementation to the `A2AClient` to modify its HTTP request behavior. Common use cases include:
+Client can be customized via [`CallInterceptor`'s](src/client/interceptors.ts) which is a recommended way as it's transport-agnostic.
+
+Common use cases include:
 
 - **Request Interception**: Log outgoing requests or collect metrics.
 - **Header Injection**: Add custom headers for authentication, tracing, or routing.
-- **Retry Mechanisms**: Implement custom logic for retrying failed requests.
+- **A2A Extensions**: Modifying payloads to include protocol extension data.
 
 ### Example: Injecting a Custom Header
 
-This example creates a `fetch` wrapper that adds a unique `X-Request-ID` to every outgoing request.
+This example defines a `CallInterceptor` to update `serviceParameters` which are passed as HTTP headers.
 
 ```typescript
-import { A2AClient } from '@a2a-js/sdk/client';
 import { v4 as uuidv4 } from 'uuid';
+import { AfterArgs, BeforeArgs, CallInterceptor, ClientFactory, ClientFactoryOptions } from '@mailmodo/a2a/client';
 
-// 1. Create a wrapper around the global fetch function.
-const fetchWithCustomHeader: typeof fetch = async (url, init) => {
-  const headers = new Headers(init?.headers);
-  headers.set('X-Request-ID', uuidv4());
+// 1. Define an interceptor
+class RequestIdInterceptor implements CallInterceptor {
+  before(args: BeforeArgs): Promise<void> {
+    args.options = {
+      ...args.options,
+      serviceParameters: {
+        ...args.options.serviceParameters,
+        ['X-Request-ID']: uuidv4(),
+      },
+    };
+    return Promise.resolve();
+  }
 
-  const newInit = { ...init, headers };
+  after(): Promise<void> {
+    return Promise.resolve();
+  }
+}
 
-  console.log(`Sending request to ${url} with X-Request-ID: ${headers.get('X-Request-ID')}`);
+// 2. Register the interceptor in the client factory
+const factory = new ClientFactory(ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+  clientConfig: {
+    interceptors: [new RequestIdInterceptor()]
+  }
+}))
+const client = await factory.createFromAgentCardUrl('http://localhost:4000');
 
-  return fetch(url, newInit);
-};
-
-// 2. Provide the custom fetch implementation to the client.
-const client = await A2AClient.fromCardUrl('http://localhost:4000/.well-known/agent-card.json', {
-  fetchImpl: fetchWithCustomHeader,
-});
-
-// Now, all requests made by this client instance will include the X-Request-ID header.
+// Now, all requests made by clients created by this factory will include the X-Request-ID header.
 await client.sendMessage({
   message: {
     messageId: uuidv4(),
@@ -293,33 +356,33 @@ await client.sendMessage({
 
 ### Example: Specifying a Timeout
 
-This example creates a `fetch` wrapper that sets a timeout for every outgoing request.
+Each client method can be configured with an optional `signal` field.
 
 ```typescript
-import { A2AClient } from '@a2a-js/sdk/client';
+import { ClientFactory } from '@mailmodo/a2a/client';
 
-// 1. Create a wrapper around the global fetch function.
-const fetchWithTimeout: typeof fetch = async (url, init) => {
-  return fetch(url, { ...init, signal: AbortSignal.timeout(5000) });
-};
+const factory = new ClientFactory();
 
-// 2. Provide the custom fetch implementation to the client.
-const client = await A2AClient.fromCardUrl('http://localhost:4000/.well-known/agent-card.json', {
-  fetchImpl: fetchWithTimeout,
-});
+// createFromUrl accepts baseUrl and optional path,
+// (the default path is /.well-known/agent-card.json)
+const client = await factory.createFromUrl('http://localhost:4000');
 
-// Now, all requests made by this client instance will have a configured timeout.
-await client.sendMessage({
-  message: {
-    messageId: uuidv4(),
-    role: 'user',
-    parts: [{ kind: 'text', text: 'A message requiring custom headers.' }],
-    kind: 'message',
+await client.sendMessage(
+  {
+    message: {
+      messageId: uuidv4(),
+      role: 'user',
+      parts: [{ kind: 'text', text: 'A long-running message.' }],
+      kind: 'message',
+    },
   },
-});
+  {
+    signal: AbortSignal.timeout(5000), // 5 seconds timeout
+  }
+);
 ```
 
-### Using the Provided `AuthenticationHandler`
+### Customizing Transports: Using the Provided `AuthenticationHandler`
 
 For advanced authentication scenarios, the SDK includes a higher-order function `createAuthenticatingFetchWithRetry` and an `AuthenticationHandler` interface. This utility automatically adds authorization headers and can retry requests that fail with authentication errors (e.g., 401 Unauthorized).
 
@@ -327,10 +390,12 @@ Here's how to use it to manage a Bearer token:
 
 ```typescript
 import {
-  A2AClient,
+  ClientFactory,
+  ClientFactoryOptions,
+  JsonRpcTransportFactory,
   AuthenticationHandler,
   createAuthenticatingFetchWithRetry,
-} from '@a2a-js/sdk/client';
+} from '@mailmodo/a2a/client';
 
 // A simple token provider that simulates fetching a new token.
 const tokenProvider = {
@@ -367,10 +432,15 @@ const handler: AuthenticationHandler = {
 // 2. Create the authenticated fetch function.
 const authFetch = createAuthenticatingFetchWithRetry(fetch, handler);
 
-// 3. Initialize the client with the new fetch implementation.
-const client = await A2AClient.fromCardUrl('http://localhost:4000/.well-known/agent-card.json', {
-  fetchImpl: authFetch,
-});
+// 3. Inject new fetch implementation into a client factory.
+const factory = new ClientFactory(ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+  transports: [
+    new JsonRpcTransportFactory({ fetchImpl: authFetch })
+  ]
+}))
+
+// 4. Clients created from the factory are going to have custom fetch attached.
+const client = await factory.createFromUrl('http://localhost:4000');
 ```
 
 ---
@@ -444,12 +514,16 @@ The `sendMessageStream` method returns an `AsyncGenerator` that yields events as
 
 ```typescript
 // client.ts
-import { A2AClient } from '@a2a-js/sdk/client';
-import { MessageSendParams } from '@a2a-js/sdk';
+import { ClientFactory } from '@mailmodo/a2a/client';
+import { MessageSendParams } from '@mailmodo/a2a';
 import { v4 as uuidv4 } from 'uuid';
 // ... other imports ...
 
-const client = await A2AClient.fromCardUrl('http://localhost:4000/.well-known/agent-card.json');
+const factory = new ClientFactory();
+
+// createFromUrl accepts baseUrl and optional path,
+// (the default path is /.well-known/agent-card.json)
+const client = await factory.createFromUrl('http://localhost:4000');
 
 async function streamTask() {
   const streamParams: MessageSendParams = {
@@ -499,7 +573,7 @@ import {
   RequestContext,
   ExecutionEventBus,
   TaskStatusUpdateEvent,
-} from '@a2a-js/sdk/server';
+} from '@mailmodo/a2a/server';
 // ... other imports ...
 
 class CancellableExecutor implements AgentExecutor {
@@ -598,7 +672,7 @@ import {
   DefaultRequestHandler,
   InMemoryPushNotificationStore,
   DefaultPushNotificationSender,
-} from '@a2a-js/sdk/server';
+} from '@mailmodo/a2a/server';
 
 // Optional: Custom push notification store and sender
 const pushNotificationStore = new InMemoryPushNotificationStore();
@@ -671,8 +745,12 @@ app.post('/webhook/task-updates', (req, res) => {
 
 ## License
 
-This project is licensed under the terms of the [Apache 2.0 License](https://raw.githubusercontent.com/google-a2a/a2a-python/refs/heads/main/LICENSE).
+This project is licensed under the terms of the [Apache 2.0 License](LICENSE).
 
-## Contributing
+## Upstream & Contributing
 
-See [CONTRIBUTING.md](https://github.com/google-a2a/a2a-js/blob/main/CONTRIBUTING.md) for contribution guidelines.
+This is a customized fork of the [official A2A JavaScript SDK](https://github.com/a2aproject/a2a-js) maintained by Mailmodo.
+
+For contributing to the upstream project, see the [upstream CONTRIBUTING.md](https://github.com/a2aproject/a2a-js/blob/main/CONTRIBUTING.md).
+
+For issues or contributions specific to this Mailmodo edition, please contact the Mailmodo team.

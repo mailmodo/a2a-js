@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.3.7](https://github.com/a2aproject/a2a-js/compare/v0.3.6...v0.3.7) (2025-12-17)
+
+
+### Features
+
+* add rest client ([#258](https://github.com/a2aproject/a2a-js/issues/258)) ([96be3a1](https://github.com/a2aproject/a2a-js/commit/96be3a1d6caa3f55673e0c0e77859fe064beab2d))
+* remove EventEmitter dependency to support Edge Runtime ([#219](https://github.com/a2aproject/a2a-js/issues/219)) ([6c76fef](https://github.com/a2aproject/a2a-js/commit/6c76fef26473d8b15d729040b6c474de2794c7fe)), closes [#218](https://github.com/a2aproject/a2a-js/issues/218)
+
+
+### Bug Fixes
+
+* export transport agnostic errors from client ([#272](https://github.com/a2aproject/a2a-js/issues/272)) ([23cd42e](https://github.com/a2aproject/a2a-js/commit/23cd42e83d6510b54b013df2efd762017f47d2a1))
+* pass ServerCallContext to getAuthenticatedExtendedAgentCard for REST ([#274](https://github.com/a2aproject/a2a-js/issues/274)) ([89b141b](https://github.com/a2aproject/a2a-js/commit/89b141b5ba915c53c04b2ffb1632e673b3adaace)), closes [#137](https://github.com/a2aproject/a2a-js/issues/137)
+
+## [0.3.6](https://github.com/a2aproject/a2a-js/compare/v0.3.5...v0.3.6) (2025-12-10)
+
+
+### Features
+
+* add support for extendedAgentCard on client side ([#234](https://github.com/a2aproject/a2a-js/issues/234)) ([3073376](https://github.com/a2aproject/a2a-js/commit/3073376f7c311f0c13c51c129d7065249735517a))
+* Add support for extension headers on client side ([#227](https://github.com/a2aproject/a2a-js/issues/227)) ([8c57002](https://github.com/a2aproject/a2a-js/commit/8c57002add3b25387da899df7a610098b0f4e01b))
+* implement client interceptors ([#223](https://github.com/a2aproject/a2a-js/issues/223)) ([5694c22](https://github.com/a2aproject/a2a-js/commit/5694c22e3bccba87137c5b4ad1b3011f9e30dcd0))
+* Implement extended card support on server side ([#197](https://github.com/a2aproject/a2a-js/issues/197)) ([45014ac](https://github.com/a2aproject/a2a-js/commit/45014ac4a192ad3c6120849577530d1d63eb27b8))
+* implement server http+json ([#142](https://github.com/a2aproject/a2a-js/issues/142)) ([f20e662](https://github.com/a2aproject/a2a-js/commit/f20e66247d3c962144d77e98e7720d6041537533))
+* introduce AgentCardResolver ([#225](https://github.com/a2aproject/a2a-js/issues/225)) ([ddaf7de](https://github.com/a2aproject/a2a-js/commit/ddaf7ded169ccc285051eeb63088dc697e6ae93e))
+* introduce transport agnostic client ([#198](https://github.com/a2aproject/a2a-js/issues/198)) ([94a9848](https://github.com/a2aproject/a2a-js/commit/94a98483998a62669140de9bfbdde483787fa065))
+* server side support for extensions ([5ef7396](https://github.com/a2aproject/a2a-js/commit/5ef73960758b78ed2a52356a10cb35cadeb440bd))
+* support authentication on server side ([#195](https://github.com/a2aproject/a2a-js/issues/195)) ([9872d93](https://github.com/a2aproject/a2a-js/commit/9872d93622e12efb7369d7e658cec7ab4fd8590c))
+
+
+### Bug Fixes
+
+* handle errors occurred in non-blocking sendMessage ([#187](https://github.com/a2aproject/a2a-js/issues/187)) ([e55c0f4](https://github.com/a2aproject/a2a-js/commit/e55c0f4791b556cc42e256073cf9018d1ec18cca))
+
+
+### Miscellaneous Chores
+
+* set version to 0.3.6 ([#191](https://github.com/a2aproject/a2a-js/issues/191)) ([3f8cea0](https://github.com/a2aproject/a2a-js/commit/3f8cea066efa59ae38ac405801884b9b5037841b))
+
 ## [0.3.5](https://github.com/a2aproject/a2a-js/compare/v0.3.4...v0.3.5) (2025-11-05)
 
 

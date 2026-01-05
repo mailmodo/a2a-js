@@ -1,6 +1,4 @@
-import 'mocha';
-import { assert, expect } from 'chai';
-import sinon, { SinonStub, SinonFakeTimers } from 'sinon';
+import { describe, it, beforeEach, afterEach, assert, expect, vi, type Mock } from 'vitest';
 
 import { AgentExecutor } from '../../src/server/agent_execution/agent_executor.js';
 import {
@@ -51,7 +49,6 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
   let mockTaskStore: TaskStore;
   let mockAgentExecutor: AgentExecutor;
   let executionEventBusManager: ExecutionEventBusManager;
-  let clock: SinonFakeTimers;
 
   const testAgentCard: AgentCard = {
     name: 'Test Agent',
@@ -76,9 +73,27 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     ],
   };
 
+  const serverCallContext = new ServerCallContext();
+
   // Before each test, reset the components to a clean state
   beforeEach(() => {
-    mockTaskStore = new InMemoryTaskStore();
+    // Wrap in-memory store into a store which ensures we pass server call context.
+    // The parameter is optional to avoid breaking changes, however it should be passed.
+    const inMemoryStore = new InMemoryTaskStore();
+    mockTaskStore = {
+      save: async (task: Task, ctx?: ServerCallContext) => {
+        if (!ctx) {
+          throw new Error('Missing server call context');
+        }
+        return inMemoryStore.save(task);
+      },
+      load: async (id: string, ctx?: ServerCallContext) => {
+        if (!ctx) {
+          throw new Error('Missing server call context');
+        }
+        return inMemoryStore.load(id);
+      },
+    };
     // Default mock for most tests
     mockAgentExecutor = new MockAgentExecutor();
     executionEventBusManager = new DefaultExecutionEventBusManager();
@@ -90,12 +105,10 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     );
   });
 
-  // After each test, restore any sinon fakes or stubs
+  // After each test, restore any mocks
   afterEach(() => {
-    sinon.restore();
-    if (clock) {
-      clock.restore();
-    }
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   // Helper function to create a basic user message
@@ -118,18 +131,15 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       kind: 'message',
     };
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       bus.publish(agentResponse);
       bus.finished();
     });
 
-    const result = await handler.sendMessage(params);
+    const result = await handler.sendMessage(params, serverCallContext);
 
     assert.deepEqual(result, agentResponse, "The result should be the agent's message");
-    assert.isTrue(
-      (mockAgentExecutor as MockAgentExecutor).execute.calledOnce,
-      'AgentExecutor.execute should be called once'
-    );
+    expect((mockAgentExecutor as MockAgentExecutor).execute).toHaveBeenCalledTimes(1);
   });
 
   it('sendMessage: (blocking) should return a task in a completed state with an artifact', async () => {
@@ -146,7 +156,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       parts: [{ kind: 'text', text: 'This is the content of the artifact.' }],
     };
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       bus.publish({
         id: taskId,
         contextId,
@@ -184,7 +194,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const result = await handler.sendMessage(params);
+    const result = await handler.sendMessage(params, serverCallContext);
     const taskResult = result as Task;
 
     assert.equal(taskResult.kind, 'task');
@@ -198,14 +208,14 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
   it('sendMessage: should handle agent execution failure for blocking calls', async () => {
     const errorMessage = 'Agent failed!';
-    (mockAgentExecutor as MockAgentExecutor).execute.rejects(new Error(errorMessage));
+    (mockAgentExecutor as MockAgentExecutor).execute.mockRejectedValue(new Error(errorMessage));
 
     // Test blocking case
     const blockingParams: MessageSendParams = {
       message: createTestMessage('msg-fail-block', 'Test failure blocking'),
     };
 
-    const blockingResult = await handler.sendMessage(blockingParams);
+    const blockingResult = await handler.sendMessage(blockingParams, serverCallContext);
     const blockingTask = blockingResult as Task;
     assert.equal(blockingTask.kind, 'task', 'Result should be a task');
     assert.equal(blockingTask.status.state, 'failed', 'Task status should be failed');
@@ -217,8 +227,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
   });
 
   it('sendMessage: (non-blocking) should return first task event immediately and process full task in background', async () => {
-    clock = sinon.useFakeTimers();
-    const saveSpy = sinon.spy(mockTaskStore, 'save');
+    vi.useFakeTimers();
+    const saveSpy = vi.spyOn(mockTaskStore, 'save');
 
     const params: MessageSendParams = {
       message: createTestMessage('msg-nonblock', 'Do a long task'),
@@ -228,7 +238,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const taskId = 'task-nonblock-123';
     const contextId = 'ctx-nonblock-abc';
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       // First event is the task creation, which should be returned immediately
       bus.publish({
         id: taskId,
@@ -238,7 +248,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       });
 
       // Simulate work before publishing more events
-      await clock.tickAsync(500);
+      await vi.advanceTimersByTimeAsync(500);
 
       bus.publish({
         taskId,
@@ -251,7 +261,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     });
 
     // This call should return as soon as the first 'task' event is published
-    const immediateResult = await handler.sendMessage(params);
+    const immediateResult = await handler.sendMessage(params, serverCallContext);
 
     // Assert that we got the initial task object back right away
     const taskResult = immediateResult as Task;
@@ -264,26 +274,26 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     );
 
     // The background processing should not have completed yet
-    assert.isTrue(saveSpy.calledOnce, 'Save should be called for the initial task creation');
-    assert.equal(saveSpy.firstCall.args[0].status.state, 'submitted');
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    assert.equal(saveSpy.mock.calls[0][0].status.state, 'submitted');
 
     // Allow the background processing to complete
-    await clock.runAllAsync();
+    await vi.runAllTimersAsync();
 
     // Now, check the final state in the store to ensure background processing finished
-    const finalTask = await mockTaskStore.load(taskId);
+    const finalTask = await mockTaskStore.load(taskId, serverCallContext);
     assert.isDefined(finalTask);
     assert.equal(
       finalTask!.status.state,
       'completed',
       "Task should be 'completed' in the store after background processing"
     );
-    assert.isTrue(saveSpy.calledTwice, 'Save should be called twice (submitted and completed)');
-    assert.equal(saveSpy.secondCall.args[0].status.state, 'completed');
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    assert.equal(saveSpy.mock.calls[1][0].status.state, 'completed');
   });
 
   it('sendMessage: (non-blocking) should handle failure in event loop after successfull task event', async () => {
-    clock = sinon.useFakeTimers();
+    vi.useFakeTimers();
 
     const mockTaskStore = new MockTaskStore();
     const handler = new DefaultRequestHandler(
@@ -303,7 +313,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
     const taskId = 'task-nonblock-123';
     const contextId = 'ctx-nonblock-abc';
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       // First event is the task creation, which should be returned immediately
       bus.publish({
         id: taskId,
@@ -313,7 +323,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       });
 
       // Simulate work before publishing more events
-      await clock.tickAsync(500);
+      await vi.advanceTimersByTimeAsync(500);
 
       bus.publish({
         taskId,
@@ -327,7 +337,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
     let finalTaskSaved: Task | undefined;
     const errorMessage = 'Error thrown on saving completed task notification';
-    (mockTaskStore as MockTaskStore).save.callsFake(async (task) => {
+    (mockTaskStore as MockTaskStore).save.mockImplementation(async (task) => {
       if (task.status.state == 'completed') {
         throw new Error(errorMessage);
       }
@@ -338,7 +348,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     });
 
     // This call should return as soon as the first 'task' event is published
-    const immediateResult = await handler.sendMessage(params);
+    const immediateResult = await handler.sendMessage(params, serverCallContext);
 
     // Assert that we got the initial task object back right away
     const taskResult = immediateResult as Task;
@@ -351,7 +361,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     );
 
     // Allow the background processing to complete
-    await clock.runAllAsync();
+    await vi.runAllTimersAsync();
 
     assert.equal(finalTaskSaved!.status.state, 'failed');
     assert.equal(finalTaskSaved!.id, taskId);
@@ -365,7 +375,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
   it('sendMessage: should handle agent execution failure for non-blocking calls', async () => {
     const errorMessage = 'Agent failed!';
-    (mockAgentExecutor as MockAgentExecutor).execute.rejects(new Error(errorMessage));
+    (mockAgentExecutor as MockAgentExecutor).execute.mockRejectedValue(new Error(errorMessage));
 
     // Test non-blocking case
     const nonBlockingParams: MessageSendParams = {
@@ -373,7 +383,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       configuration: { blocking: false, acceptedOutputModes: [] },
     };
 
-    const nonBlockingResult = await handler.sendMessage(nonBlockingParams);
+    const nonBlockingResult = await handler.sendMessage(nonBlockingParams, serverCallContext);
     const nonBlockingTask = nonBlockingResult as Task;
     assert.equal(nonBlockingTask.kind, 'task', 'Result should be a task');
     assert.equal(nonBlockingTask.status.state, 'failed', 'Task status should be failed');
@@ -396,7 +406,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
     let taskId: string;
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       taskId = ctx.taskId;
 
       // Publish task creation
@@ -437,7 +447,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const firstResult = await handler.sendMessage(firstParams);
+    const firstResult = await handler.sendMessage(firstParams, serverCallContext);
     const firstTask = firstResult as Task;
 
     // Check the first result is a task with `input-required` status
@@ -471,7 +481,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       message: secondMessage,
     };
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       // Publish a status update with working state
       bus.publish({
         taskId,
@@ -527,7 +537,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const secondResult = await handler.sendMessage(secondParams);
+    const secondResult = await handler.sendMessage(secondParams, serverCallContext);
     const secondTask = secondResult as Task;
 
     // Check the second result is a task with `completed` status
@@ -586,7 +596,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
   it('sendMessage: should return second task with full history if message is sent to an existing, non-terminal task, in non-blocking mode', async () => {
     const contextId = 'ctx-history-abc';
-    clock = sinon.useFakeTimers();
+    vi.useFakeTimers();
 
     // First message
     const firstMessage = createTestMessage('msg-1', 'Message 1');
@@ -597,7 +607,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
     let taskId: string;
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       taskId = ctx.taskId;
 
       // Publish task creation
@@ -638,7 +648,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const firstResult = await handler.sendMessage(firstParams);
+    const firstResult = await handler.sendMessage(firstParams, serverCallContext);
     const firstTask = firstResult as Task;
 
     // Check the first result is a task with `input-required` status
@@ -673,7 +683,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       configuration: { blocking: false },
     };
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       // Publish a status update with working state
       bus.publish({
         taskId,
@@ -683,7 +693,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
         final: false,
       });
 
-      await clock.tickAsync(10);
+      await vi.advanceTimersByTimeAsync(10);
 
       // Publish a status update with working state and message
       bus.publish({
@@ -731,7 +741,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const secondResult = await handler.sendMessage(secondParams);
+    const secondResult = await handler.sendMessage(secondParams, serverCallContext);
 
     // Check the second result is a task with `completed` status
     const secondTask = secondResult as Task;
@@ -739,9 +749,9 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.equal(secondTask.id, taskId, 'Should be the same task');
     assert.equal(secondTask.status.state, 'working'); // It will receive the Task in the status of the first published event
 
-    await clock.runAllAsync(); // give time to the second task to publish all the updates
+    await vi.runAllTimersAsync(); // give time to the second task to publish all the updates
 
-    const finalTask = await mockTaskStore.load(taskId);
+    const finalTask = await mockTaskStore.load(taskId, serverCallContext);
 
     // Check the history
     assert.equal(finalTask.status.state, 'completed');
@@ -796,7 +806,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const taskId = 'task-stream-1';
     const contextId = 'ctx-stream-1';
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       bus.publish({
         id: taskId,
         contextId,
@@ -822,7 +832,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const eventGenerator = handler.sendMessageStream(params);
+    const eventGenerator = handler.sendMessageStream(params, serverCallContext);
     const events = [];
     for await (const event of eventGenerator) {
       events.push(event);
@@ -846,14 +856,14 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
         status: { state: state as TaskState },
         kind: 'task',
       };
-      await mockTaskStore.save(fakeTask);
+      await mockTaskStore.save(fakeTask, serverCallContext);
 
       const params: MessageSendParams = {
         message: { ...createTestMessage('msg-1', 'test'), taskId: taskId },
       };
 
       try {
-        await handler.sendMessage(params);
+        await handler.sendMessage(params, serverCallContext);
         assert.fail(`Should have thrown for state: ${state}`);
       } catch (error: any) {
         expect(error.code).to.equal(-32600); // Invalid Request
@@ -872,13 +882,13 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       status: { state: 'completed' },
       kind: 'task',
     };
-    await mockTaskStore.save(fakeTask);
+    await mockTaskStore.save(fakeTask, serverCallContext);
 
     const params: MessageSendParams = {
       message: { ...createTestMessage('msg-1', 'test'), taskId: taskId },
     };
 
-    const generator = handler.sendMessageStream(params);
+    const generator = handler.sendMessageStream(params, serverCallContext);
 
     try {
       await generator.next();
@@ -898,7 +908,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const taskId = 'task-input';
     const contextId = 'ctx-input';
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       bus.publish({
         id: taskId,
         contextId,
@@ -915,7 +925,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const eventGenerator = handler.sendMessageStream(params);
+    const eventGenerator = handler.sendMessageStream(params, serverCallContext);
     const events = [];
     for await (const event of eventGenerator) {
       events.push(event);
@@ -928,8 +938,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
   });
 
   it('resubscribe: should allow multiple clients to receive events for the same task', async () => {
-    const saveSpy = sinon.spy(mockTaskStore, 'save');
-    clock = sinon.useFakeTimers();
+    const saveSpy = vi.spyOn(mockTaskStore, 'save');
+    vi.useFakeTimers();
     const params: MessageSendParams = {
       message: createTestMessage('msg-5', 'Long running task'),
     };
@@ -937,7 +947,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     let taskId;
     let contextId;
 
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       taskId = ctx.taskId;
       contextId = ctx.contextId;
 
@@ -954,7 +964,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
         status: { state: 'working' },
         final: false,
       });
-      await clock.tickAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
       bus.publish({
         taskId,
         contextId,
@@ -965,7 +975,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       bus.finished();
     });
 
-    const stream1_generator = handler.sendMessageStream(params);
+    const stream1_generator = handler.sendMessageStream(params, serverCallContext);
     const stream1_iterator = stream1_generator[Symbol.asyncIterator]();
 
     const firstEventResult = await stream1_iterator.next();
@@ -976,7 +986,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const secondEvent = secondEventResult.value as TaskStatusUpdateEvent;
     assert.equal(secondEvent.taskId, taskId, 'Should get the task status update event second');
 
-    const stream2_generator = handler.resubscribe({ id: taskId });
+    const stream2_generator = handler.resubscribe({ id: taskId }, serverCallContext);
 
     const results1: any[] = [firstEvent, secondEvent];
     const results2: any[] = [];
@@ -990,7 +1000,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const p1 = collect(stream1_iterator, results1);
     const p2 = collect(stream2_generator, results2);
 
-    await clock.runAllAsync();
+    await vi.runAllTimersAsync();
     await Promise.all([p1, p2]);
 
     assert.equal((results1[0] as TaskStatusUpdateEvent).status.state, 'submitted');
@@ -1001,8 +1011,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.equal((results2[0] as Task).status.state, 'working');
     assert.equal((results2[1] as TaskStatusUpdateEvent).status.state, 'completed');
 
-    assert.isTrue(saveSpy.calledThrice, 'TaskStore.save should be called 3 times');
-    const lastSaveCall = saveSpy.lastCall.args[0];
+    expect(saveSpy).toHaveBeenCalledTimes(3);
+    const lastSaveCall = saveSpy.mock.calls[saveSpy.mock.calls.length - 1][0];
     assert.equal(lastSaveCall.id, taskId);
     assert.equal(lastSaveCall.status.state, 'completed');
   });
@@ -1015,9 +1025,9 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       kind: 'task',
       history: [],
     };
-    await mockTaskStore.save(fakeTask);
+    await mockTaskStore.save(fakeTask, serverCallContext);
 
-    const result = await handler.getTask({ id: 'task-exist' });
+    const result = await handler.getTask({ id: 'task-exist' }, serverCallContext);
     assert.deepEqual(result, fakeTask);
   });
 
@@ -1029,7 +1039,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       status: { state: 'working' },
       kind: 'task',
     };
-    await mockTaskStore.save(fakeTask);
+    await mockTaskStore.save(fakeTask, serverCallContext);
 
     const pushConfig: PushNotificationConfig = {
       id: 'config-1',
@@ -1041,7 +1051,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       taskId,
       pushNotificationConfig: pushConfig,
     };
-    const setResponse = await handler.setTaskPushNotificationConfig(setParams);
+    const setResponse = await handler.setTaskPushNotificationConfig(setParams, serverCallContext);
     assert.deepEqual(
       setResponse.pushNotificationConfig,
       pushConfig,
@@ -1052,7 +1062,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       id: taskId,
       pushNotificationConfigId: 'config-1',
     };
-    const getResponse = await handler.getTaskPushNotificationConfig(getParams);
+    const getResponse = await handler.getTaskPushNotificationConfig(getParams, serverCallContext);
     assert.deepEqual(
       getResponse.pushNotificationConfig,
       pushConfig,
@@ -1062,70 +1072,94 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
   it('set/getTaskPushNotificationConfig: should save and retrieve config by task ID for backward compatibility', async () => {
     const taskId = 'task-push-compat';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: 'ctx-compat',
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: 'ctx-compat',
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
 
     // Config ID defaults to task ID
     const pushConfig: PushNotificationConfig = {
       url: 'https://example.com/notify-compat',
     };
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: pushConfig,
-    });
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: pushConfig,
+      },
+      serverCallContext
+    );
 
-    const getResponse = await handler.getTaskPushNotificationConfig({
-      id: taskId,
-    });
+    const getResponse = await handler.getTaskPushNotificationConfig(
+      {
+        id: taskId,
+      },
+      serverCallContext
+    );
     expect(getResponse.pushNotificationConfig.id).to.equal(taskId);
     expect(getResponse.pushNotificationConfig.url).to.equal(pushConfig.url);
   });
 
   it('setTaskPushNotificationConfig: should overwrite an existing config with the same ID', async () => {
     const taskId = 'task-overwrite';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: 'ctx-overwrite',
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: 'ctx-overwrite',
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
     const initialConfig: PushNotificationConfig = {
       id: 'config-same',
       url: 'https://initial.url',
     };
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: initialConfig,
-    });
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: initialConfig,
+      },
+      serverCallContext
+    );
 
     const newConfig: PushNotificationConfig = {
       id: 'config-same',
       url: 'https://new.url',
     };
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: newConfig,
-    });
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: newConfig,
+      },
+      serverCallContext
+    );
 
-    const configs = await handler.listTaskPushNotificationConfigs({
-      id: taskId,
-    });
+    const configs = await handler.listTaskPushNotificationConfigs(
+      {
+        id: taskId,
+      },
+      serverCallContext
+    );
     expect(configs).to.have.lengthOf(1);
     expect(configs[0].pushNotificationConfig.url).to.equal('https://new.url');
   });
 
   it('listTaskPushNotificationConfigs: should return all configs for a task', async () => {
     const taskId = 'task-list-configs';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: 'ctx-list',
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: 'ctx-list',
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
     const config1: PushNotificationConfig = {
       id: 'cfg1',
       url: 'https://url1.com',
@@ -1134,17 +1168,26 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       id: 'cfg2',
       url: 'https://url2.com',
     };
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: config1,
-    });
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: config2,
-    });
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: config1,
+      },
+      serverCallContext
+    );
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: config2,
+      },
+      serverCallContext
+    );
 
     const listParams: ListTaskPushNotificationConfigParams = { id: taskId };
-    const listResponse = await handler.listTaskPushNotificationConfigs(listParams);
+    const listResponse = await handler.listTaskPushNotificationConfigs(
+      listParams,
+      serverCallContext
+    );
 
     expect(listResponse).to.be.an('array').with.lengthOf(2);
     assert.deepInclude(listResponse, {
@@ -1159,12 +1202,15 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
   it('deleteTaskPushNotificationConfig: should remove a specific config', async () => {
     const taskId = 'task-delete-config';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: 'ctx-delete',
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: 'ctx-delete',
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
     const config1: PushNotificationConfig = {
       id: 'cfg-del-1',
       url: 'https://url1.com',
@@ -1173,53 +1219,74 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       id: 'cfg-del-2',
       url: 'https://url2.com',
     };
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: config1,
-    });
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: config2,
-    });
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: config1,
+      },
+      serverCallContext
+    );
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: config2,
+      },
+      serverCallContext
+    );
 
     const deleteParams: DeleteTaskPushNotificationConfigParams = {
       id: taskId,
       pushNotificationConfigId: 'cfg-del-1',
     };
-    await handler.deleteTaskPushNotificationConfig(deleteParams);
+    await handler.deleteTaskPushNotificationConfig(deleteParams, serverCallContext);
 
-    const remainingConfigs = await handler.listTaskPushNotificationConfigs({
-      id: taskId,
-    });
+    const remainingConfigs = await handler.listTaskPushNotificationConfigs(
+      {
+        id: taskId,
+      },
+      serverCallContext
+    );
     expect(remainingConfigs).to.have.lengthOf(1);
     expect(remainingConfigs[0].pushNotificationConfig.id).to.equal('cfg-del-2');
   });
 
   it('deleteTaskPushNotificationConfig: should remove the whole entry if last config is deleted', async () => {
     const taskId = 'task-delete-last-config';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: 'ctx-delete-last',
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: 'ctx-delete-last',
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
     const config: PushNotificationConfig = {
       id: 'cfg-last',
       url: 'https://last.com',
     };
-    await handler.setTaskPushNotificationConfig({
-      taskId,
-      pushNotificationConfig: config,
-    });
+    await handler.setTaskPushNotificationConfig(
+      {
+        taskId,
+        pushNotificationConfig: config,
+      },
+      serverCallContext
+    );
 
-    await handler.deleteTaskPushNotificationConfig({
-      id: taskId,
-      pushNotificationConfigId: 'cfg-last',
-    });
+    await handler.deleteTaskPushNotificationConfig(
+      {
+        id: taskId,
+        pushNotificationConfigId: 'cfg-last',
+      },
+      serverCallContext
+    );
 
-    const configs = await handler.listTaskPushNotificationConfigs({
-      id: taskId,
-    });
+    const configs = await handler.listTaskPushNotificationConfigs(
+      {
+        id: taskId,
+      },
+      serverCallContext
+    );
     expect(configs).to.be.an('array').with.lengthOf(0);
   });
 
@@ -1251,12 +1318,12 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     };
 
     let taskId: string;
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       taskId = ctx.taskId;
       fakeTaskExecute(ctx, bus);
     });
 
-    await handler.sendMessage(params);
+    await handler.sendMessage(params, serverCallContext);
 
     const expectedTask: Task = {
       id: taskId,
@@ -1267,11 +1334,13 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     };
 
     // Verify push notifications were sent with complete task objects
-    assert.isTrue((mockPushNotificationSender as MockPushNotificationSender).send.calledThrice);
+    expect((mockPushNotificationSender as MockPushNotificationSender).send).toHaveBeenCalledTimes(
+      3
+    );
 
     // Verify first call (submitted state)
-    const firstCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.firstCall
-      .args[0] as Task;
+    const firstCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.mock
+      .calls[0][0] as Task;
     const expectedFirstTask: Task = {
       ...expectedTask,
       status: { state: 'submitted' },
@@ -1279,8 +1348,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.deepEqual(firstCallTask, expectedFirstTask);
 
     // // Verify second call (working state)
-    const secondCallTask = (mockPushNotificationSender as MockPushNotificationSender).send
-      .secondCall.args[0] as Task;
+    const secondCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.mock
+      .calls[1][0] as Task;
     const expectedSecondTask: Task = {
       ...expectedTask,
       status: { state: 'working' },
@@ -1288,8 +1357,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.deepEqual(secondCallTask, expectedSecondTask);
 
     // // Verify third call (completed state)
-    const thirdCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.thirdCall
-      .args[0] as Task;
+    const thirdCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.mock
+      .calls[2][0] as Task;
     const expectedThirdTask: Task = {
       ...expectedTask,
       status: { state: 'completed' },
@@ -1326,12 +1395,12 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     };
 
     let taskId: string;
-    (mockAgentExecutor as MockAgentExecutor).execute.callsFake(async (ctx, bus) => {
+    (mockAgentExecutor as MockAgentExecutor).execute.mockImplementation(async (ctx, bus) => {
       taskId = ctx.taskId;
       fakeTaskExecute(ctx, bus);
     });
 
-    const eventGenerator = handler.sendMessageStream(params);
+    const eventGenerator = handler.sendMessageStream(params, serverCallContext);
     const events = [];
     for await (const event of eventGenerator) {
       events.push(event);
@@ -1345,7 +1414,9 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.isTrue((events[2] as TaskStatusUpdateEvent).final);
 
     // Verify push notifications were sent with complete task objects
-    assert.isTrue((mockPushNotificationSender as MockPushNotificationSender).send.calledThrice);
+    expect((mockPushNotificationSender as MockPushNotificationSender).send).toHaveBeenCalledTimes(
+      3
+    );
 
     const expectedTask: Task = {
       id: taskId,
@@ -1355,8 +1426,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       history: [params.message as Message],
     };
     // Verify first call (submitted state)
-    const firstCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.firstCall
-      .args[0] as Task;
+    const firstCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.mock
+      .calls[0][0] as Task;
     const expectedFirstTask: Task = {
       ...expectedTask,
       status: { state: 'submitted' },
@@ -1364,8 +1435,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.deepEqual(firstCallTask, expectedFirstTask);
 
     // Verify second call (working state)
-    const secondCallTask = (mockPushNotificationSender as MockPushNotificationSender).send
-      .secondCall.args[0] as Task;
+    const secondCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.mock
+      .calls[1][0] as Task;
     const expectedSecondTask: Task = {
       ...expectedTask,
       status: { state: 'working' },
@@ -1373,8 +1444,8 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     assert.deepEqual(secondCallTask, expectedSecondTask);
 
     // Verify third call (completed state)
-    const thirdCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.thirdCall
-      .args[0] as Task;
+    const thirdCallTask = (mockPushNotificationSender as MockPushNotificationSender).send.mock
+      .calls[2][0] as Task;
     const expectedThirdTask: Task = {
       ...expectedTask,
       status: { state: 'completed' },
@@ -1410,7 +1481,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
 
     for (const method of methodsToTest) {
       try {
-        await (handler as any)[method.name](method.params);
+        await (handler as any)[method.name](method.params, serverCallContext);
         assert.fail(`Method ${method.name} should have thrown for non-existent task.`);
       } catch (error: any) {
         expect(error).to.be.instanceOf(A2AError);
@@ -1432,12 +1503,15 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     );
 
     const taskId = 'task-unsupported';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: 'ctx-unsupported',
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: 'ctx-unsupported',
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
     const config: PushNotificationConfig = {
       id: 'cfg-u',
       url: 'https://u.com',
@@ -1471,9 +1545,9 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
   });
 
   it('cancelTask: should cancel a running task and notify listeners', async () => {
-    clock = sinon.useFakeTimers();
+    vi.useFakeTimers();
     // Use the more advanced mock for this specific test
-    const cancellableExecutor = new CancellableMockAgentExecutor(clock);
+    const cancellableExecutor = new CancellableMockAgentExecutor();
     handler = new DefaultRequestHandler(
       testAgentCard,
       mockTaskStore,
@@ -1484,7 +1558,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const streamParams: MessageSendParams = {
       message: createTestMessage('msg-9', 'Start and cancel'),
     };
-    const streamGenerator = handler.sendMessageStream(streamParams);
+    const streamGenerator = handler.sendMessageStream(streamParams, serverCallContext);
 
     const streamEvents: any[] = [];
     (async () => {
@@ -1494,30 +1568,33 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     })();
 
     // Allow the task to be created and enter the 'working' state
-    await clock.tickAsync(150);
+    await vi.advanceTimersByTimeAsync(150);
 
     const createdTask = streamEvents.find((e) => e.kind === 'task') as Task;
     assert.isDefined(createdTask, 'Task creation event should have been received');
     const taskId = createdTask.id;
 
     // Now, issue the cancel request
-    const cancelResponse = await handler.cancelTask({ id: taskId });
+    const cancelResponse = await handler.cancelTask({ id: taskId }, serverCallContext);
 
     // Let the executor's loop run to completion to detect the cancellation
-    await clock.runAllAsync();
+    await vi.runAllTimersAsync();
 
-    assert.isTrue(cancellableExecutor.cancelTaskSpy.calledOnceWith(taskId, sinon.match.any));
+    expect(cancellableExecutor.cancelTaskSpy).toHaveBeenCalledExactlyOnceWith(
+      taskId,
+      expect.anything()
+    );
 
-    const finalTask = await handler.getTask({ id: taskId });
+    const finalTask = await handler.getTask({ id: taskId }, serverCallContext);
     assert.equal(finalTask.status.state, 'canceled');
 
     assert.equal(cancelResponse.status.state, 'canceled');
   });
 
   it('cancelTask: should fail when it fails to cancel a task', async () => {
-    clock = sinon.useFakeTimers();
+    vi.useFakeTimers();
     // Use the more advanced mock for this specific test
-    const failingCancellableExecutor = new FailingCancellableMockAgentExecutor(clock);
+    const failingCancellableExecutor = new FailingCancellableMockAgentExecutor();
 
     handler = new DefaultRequestHandler(
       testAgentCard,
@@ -1529,7 +1606,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     const streamParams: MessageSendParams = {
       message: createTestMessage('msg-9', 'Start and cancel'),
     };
-    const streamGenerator = handler.sendMessageStream(streamParams);
+    const streamGenerator = handler.sendMessageStream(streamParams, serverCallContext);
 
     const streamEvents: any[] = [];
     (async () => {
@@ -1539,7 +1616,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     })();
 
     // Allow the task to be created and enter the 'working' state
-    await clock.tickAsync(150);
+    await vi.advanceTimersByTimeAsync(150);
 
     const createdTask = streamEvents.find((e) => e.kind === 'task') as Task;
     assert.isDefined(createdTask, 'Task creation event should have been received');
@@ -1548,7 +1625,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     let cancelResponse: Task;
     let thrownError: any;
     try {
-      cancelResponse = await handler.cancelTask({ id: taskId });
+      cancelResponse = await handler.cancelTask({ id: taskId }, serverCallContext);
     } catch (error: any) {
       thrownError = error;
     } finally {
@@ -1556,8 +1633,9 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       assert.isUndefined(cancelResponse);
       assert.equal(thrownError.code, -32002);
       expect(thrownError.message).to.contain('Task not cancelable');
-      assert.isTrue(
-        failingCancellableExecutor.cancelTaskSpy.calledOnceWith(taskId, sinon.match.any)
+      expect(failingCancellableExecutor.cancelTaskSpy).toHaveBeenCalledWith(
+        taskId,
+        expect.anything()
       );
     }
   });
@@ -1570,16 +1648,16 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       status: { state: 'completed' },
       kind: 'task',
     };
-    await mockTaskStore.save(fakeTask);
+    await mockTaskStore.save(fakeTask, serverCallContext);
 
     try {
-      await handler.cancelTask({ id: taskId });
+      await handler.cancelTask({ id: taskId }, serverCallContext);
       assert.fail('Should have thrown a TaskNotCancelableError');
     } catch (error: any) {
       assert.equal(error.code, -32002);
       expect(error.message).to.contain('Task not cancelable');
     }
-    assert.isFalse((mockAgentExecutor as MockAgentExecutor).cancelTask.called);
+    expect((mockAgentExecutor as MockAgentExecutor).cancelTask).not.toHaveBeenCalled();
   });
 
   it('should use contextId from incomingMessage if present (contextId assignment logic)', async () => {
@@ -1593,7 +1671,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       },
     };
     let capturedContextId: string | undefined;
-    (mockAgentExecutor.execute as SinonStub).callsFake(async (ctx, bus) => {
+    (mockAgentExecutor.execute as unknown as Mock).mockImplementation(async (ctx, bus) => {
       capturedContextId = ctx.contextId;
       bus.publish({
         id: ctx.taskId,
@@ -1603,19 +1681,22 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       });
       bus.finished();
     });
-    await handler.sendMessage(params);
+    await handler.sendMessage(params, serverCallContext);
     expect(capturedContextId).to.equal('incoming-ctx-id');
   });
 
   it('should use contextId from task if not present in incomingMessage (contextId assignment logic)', async () => {
     const taskId = 'task-ctx-id';
     const taskContextId = 'task-context-id';
-    await mockTaskStore.save({
-      id: taskId,
-      contextId: taskContextId,
-      status: { state: 'working' },
-      kind: 'task',
-    });
+    await mockTaskStore.save(
+      {
+        id: taskId,
+        contextId: taskContextId,
+        status: { state: 'working' },
+        kind: 'task',
+      },
+      serverCallContext
+    );
     const params: MessageSendParams = {
       message: {
         messageId: 'msg-ctx2',
@@ -1626,7 +1707,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       },
     };
     let capturedContextId: string | undefined;
-    (mockAgentExecutor.execute as SinonStub).callsFake(async (ctx, bus) => {
+    (mockAgentExecutor.execute as unknown as Mock).mockImplementation(async (ctx, bus) => {
       capturedContextId = ctx.contextId;
       bus.publish({
         id: ctx.taskId,
@@ -1636,7 +1717,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       });
       bus.finished();
     });
-    await handler.sendMessage(params);
+    await handler.sendMessage(params, serverCallContext);
     expect(capturedContextId).to.equal(taskContextId);
   });
 
@@ -1650,7 +1731,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       },
     };
     let capturedContextId: string | undefined;
-    (mockAgentExecutor.execute as SinonStub).callsFake(async (ctx, bus) => {
+    (mockAgentExecutor.execute as unknown as Mock).mockImplementation(async (ctx, bus) => {
       capturedContextId = ctx.contextId;
       bus.publish({
         id: ctx.taskId,
@@ -1660,7 +1741,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       });
       bus.finished();
     });
-    await handler.sendMessage(params);
+    await handler.sendMessage(params, serverCallContext);
     expect(capturedContextId).to.be.a('string').and.not.empty;
   });
 
@@ -1692,7 +1773,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     };
 
     let capturedRequestContext: RequestContext | undefined;
-    (mockAgentExecutor.execute as SinonStub).callsFake(
+    (mockAgentExecutor.execute as unknown as Mock).mockImplementation(
       async (ctx: RequestContext, bus: ExecutionEventBus) => {
         capturedRequestContext = ctx;
         bus.publish({
@@ -1711,11 +1792,11 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
       status: { state: 'submitted' as TaskState },
       kind: 'task',
     };
-    await mockTaskStore.save(fakeTask);
+    await mockTaskStore.save(fakeTask, serverCallContext);
     await handler.sendMessage(
       params,
       new ServerCallContext(
-        new Set([expectedExtension, 'not-available-extension-by-agent-card']),
+        [expectedExtension, 'not-available-extension-by-agent-card'],
         new UnauthenticatedUser()
       )
     );
@@ -1731,7 +1812,7 @@ describe('DefaultRequestHandler as A2ARequestHandler', () => {
     expect(capturedRequestContext?.taskId).to.equal(incomingTaskId, 'taskId should match');
     expect(capturedRequestContext?.contextId).to.equal(incomingContextId, 'contextId should match');
     expect(capturedRequestContext?.context?.requestedExtensions).to.deep.equal(
-      new Set([expectedExtension]),
+      [expectedExtension],
       'requestedExtensions should contain the expected extension'
     );
     expect(capturedRequestContext?.context?.user).to.be.an.instanceOf(UnauthenticatedUser);

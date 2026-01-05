@@ -1,4 +1,4 @@
-# Ensures no accidential Node.js API usage in browser-compatible entrypoints.
+# Ensures no accidential Node.js API usage in browser and Edge compatible entrypoints.
 
 name: Run Build Tests
 
@@ -7,6 +7,11 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.github/CODEOWNERS'
+      - 'test/**'
 
 jobs:
   test:
@@ -22,4 +27,4 @@ jobs:
         cache: 'npm'
     - run: npm ci
     - run: npm run build
-    - run: npm run test-build:browser
+    - run: npm run test-build

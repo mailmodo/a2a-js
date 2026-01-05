@@ -18,7 +18,7 @@ import {
   Part, // Added for explicit Part typing
 } from '../index.js';
 
-import { A2AClient } from '../client/index.js';
+import { ClientFactory } from '../client/index.js';
 
 // --- ANSI Colors ---
 const colors = {
@@ -44,156 +44,157 @@ function generateId(): string {
   return crypto.randomUUID();
 }
 
-// --- State ---
-let currentTaskId: string | undefined = undefined; // Initialize as undefined
-let currentContextId: string | undefined = undefined; // Initialize as undefined
-const serverUrl = process.argv[2] || 'http://localhost:41241'; // Agent's base URL
-const client = new A2AClient(serverUrl);
-let agentName = 'Agent'; // Default, try to get from agent card later
+async function runCli() {
+  // --- State ---
+  let currentTaskId: string | undefined = undefined; // Initialize as undefined
+  let currentContextId: string | undefined = undefined; // Initialize as undefined
+  const serverUrl = process.argv[2] || 'http://localhost:41241'; // Agent's base URL
+  const factory = new ClientFactory();
+  const client = await factory.createFromUrl(serverUrl);
+  let agentName = 'Agent'; // Default, try to get from agent card later
 
-// --- Readline Setup ---
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: colorize('cyan', 'You: '),
-});
-
-// --- Response Handling ---
-// Function now accepts the unwrapped event payload directly
-function printAgentEvent(event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent) {
-  const timestamp = new Date().toLocaleTimeString();
-  const prefix = colorize('magenta', `\n${agentName} [${timestamp}]:`);
-
-  // Check if it's a TaskStatusUpdateEvent
-  if (event.kind === 'status-update') {
-    const update = event as TaskStatusUpdateEvent; // Cast for type safety
-    const state = update.status.state;
-    let stateEmoji = '❓';
-    let stateColor: keyof typeof colors = 'yellow';
-
-    switch (state) {
-      case 'working':
-        stateEmoji = '⏳';
-        stateColor = 'blue';
-        break;
-      case 'input-required':
-        stateEmoji = '🤔';
-        stateColor = 'yellow';
-        break;
-      case 'completed':
-        stateEmoji = '✅';
-        stateColor = 'green';
-        break;
-      case 'canceled':
-        stateEmoji = '⏹️';
-        stateColor = 'gray';
-        break;
-      case 'failed':
-        stateEmoji = '❌';
-        stateColor = 'red';
-        break;
-      default:
-        stateEmoji = 'ℹ️'; // For other states like submitted, rejected etc.
-        stateColor = 'dim';
-        break;
-    }
-
-    console.log(
-      `${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${update.taskId}, Context: ${update.contextId}) ${update.final ? colorize('bright', '[FINAL]') : ''}`
-    );
-
-    if (update.status.message) {
-      printMessageContent(update.status.message);
-    }
-  }
-  // Check if it's a TaskArtifactUpdateEvent
-  else if (event.kind === 'artifact-update') {
-    const update = event as TaskArtifactUpdateEvent; // Cast for type safety
-    console.log(
-      `${prefix} 📄 Artifact Received: ${
-        update.artifact.name || '(unnamed)'
-      } (ID: ${update.artifact.artifactId}, Task: ${update.taskId}, Context: ${update.contextId})`
-    );
-    // Create a temporary message-like structure to reuse printMessageContent
-    printMessageContent({
-      messageId: generateId(), // Dummy messageId
-      kind: 'message', // Dummy kind
-      role: 'agent', // Assuming artifact parts are from agent
-      parts: update.artifact.parts,
-      taskId: update.taskId,
-      contextId: update.contextId,
-    });
-  } else {
-    // This case should ideally not be reached if called correctly
-    console.log(
-      prefix,
-      colorize('yellow', 'Received unknown event type in printAgentEvent:'),
-      event
-    );
-  }
-}
-
-function printMessageContent(message: Message) {
-  message.parts.forEach((part: Part, index: number) => {
-    // Added explicit Part type
-    const partPrefix = colorize('red', `  Part ${index + 1}:`);
-    if (part.kind === 'text') {
-      // Check kind property
-      console.log(`${partPrefix} ${colorize('green', '📝 Text:')}`, part.text);
-    } else if (part.kind === 'file') {
-      // Check kind property
-      const filePart = part as FilePart;
-      console.log(
-        `${partPrefix} ${colorize('blue', '📄 File:')} Name: ${
-          filePart.file.name || 'N/A'
-        }, Type: ${filePart.file.mimeType || 'N/A'}, Source: ${
-          'bytes' in filePart.file ? 'Inline (bytes)' : filePart.file.uri
-        }`
-      );
-    } else if (part.kind === 'data') {
-      // Check kind property
-      const dataPart = part as DataPart;
-      console.log(
-        `${partPrefix} ${colorize('yellow', '📊 Data:')}`,
-        JSON.stringify(dataPart.data, null, 2)
-      );
-    } else {
-      console.log(`${partPrefix} ${colorize('yellow', 'Unsupported part kind:')}`, part);
-    }
+  // --- Readline Setup ---
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: colorize('cyan', 'You: '),
   });
-}
 
-// --- Agent Card Fetching ---
-async function fetchAndDisplayAgentCard() {
-  // Use the client's getAgentCard method.
-  // The client was initialized with serverUrl, which is the agent's base URL.
-  console.log(colorize('dim', `Attempting to fetch agent card from agent at: ${serverUrl}`));
-  try {
-    // client.getAgentCard() uses the agentBaseUrl provided during client construction
-    const card: AgentCard = await client.getAgentCard();
-    agentName = card.name || 'Agent'; // Update global agent name
-    console.log(colorize('green', `✓ Agent Card Found:`));
-    console.log(`  Name:        ${colorize('bright', agentName)}`);
-    if (card.description) {
-      console.log(`  Description: ${card.description}`);
+  // --- Response Handling ---
+  // Function now accepts the unwrapped event payload directly
+  function printAgentEvent(event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent) {
+    const timestamp = new Date().toLocaleTimeString();
+    const prefix = colorize('magenta', `\n${agentName} [${timestamp}]:`);
+
+    // Check if it's a TaskStatusUpdateEvent
+    if (event.kind === 'status-update') {
+      const update = event as TaskStatusUpdateEvent; // Cast for type safety
+      const state = update.status.state;
+      let stateEmoji = '❓';
+      let stateColor: keyof typeof colors = 'yellow';
+
+      switch (state) {
+        case 'working':
+          stateEmoji = '⏳';
+          stateColor = 'blue';
+          break;
+        case 'input-required':
+          stateEmoji = '🤔';
+          stateColor = 'yellow';
+          break;
+        case 'completed':
+          stateEmoji = '✅';
+          stateColor = 'green';
+          break;
+        case 'canceled':
+          stateEmoji = '⏹️';
+          stateColor = 'gray';
+          break;
+        case 'failed':
+          stateEmoji = '❌';
+          stateColor = 'red';
+          break;
+        default:
+          stateEmoji = 'ℹ️'; // For other states like submitted, rejected etc.
+          stateColor = 'dim';
+          break;
+      }
+
+      console.log(
+        `${prefix} ${stateEmoji} Status: ${colorize(stateColor, state)} (Task: ${update.taskId}, Context: ${update.contextId}) ${update.final ? colorize('bright', '[FINAL]') : ''}`
+      );
+
+      if (update.status.message) {
+        printMessageContent(update.status.message);
+      }
     }
-    console.log(`  Version:     ${card.version || 'N/A'}`);
-    if (card.capabilities?.streaming) {
-      console.log(`  Streaming:   ${colorize('green', 'Supported')}`);
+    // Check if it's a TaskArtifactUpdateEvent
+    else if (event.kind === 'artifact-update') {
+      const update = event as TaskArtifactUpdateEvent; // Cast for type safety
+      console.log(
+        `${prefix} 📄 Artifact Received: ${
+          update.artifact.name || '(unnamed)'
+        } (ID: ${update.artifact.artifactId}, Task: ${update.taskId}, Context: ${update.contextId})`
+      );
+      // Create a temporary message-like structure to reuse printMessageContent
+      printMessageContent({
+        messageId: generateId(), // Dummy messageId
+        kind: 'message', // Dummy kind
+        role: 'agent', // Assuming artifact parts are from agent
+        parts: update.artifact.parts,
+        taskId: update.taskId,
+        contextId: update.contextId,
+      });
     } else {
-      console.log(`  Streaming:   ${colorize('yellow', 'Not Supported (or not specified)')}`);
+      // This case should ideally not be reached if called correctly
+      console.log(
+        prefix,
+        colorize('yellow', 'Received unknown event type in printAgentEvent:'),
+        event
+      );
     }
-    // Update prompt prefix to use the fetched name
-    // The prompt is set dynamically before each rl.prompt() call in the main loop
-    // to reflect the current agentName if it changes (though unlikely after initial fetch).
-  } catch (error: any) {
-    console.log(colorize('yellow', `⚠️ Error fetching or parsing agent card`));
-    throw error;
   }
-}
 
-// --- Main Loop ---
-async function main() {
+  function printMessageContent(message: Message) {
+    message.parts.forEach((part: Part, index: number) => {
+      // Added explicit Part type
+      const partPrefix = colorize('red', `  Part ${index + 1}:`);
+      if (part.kind === 'text') {
+        // Check kind property
+        console.log(`${partPrefix} ${colorize('green', '📝 Text:')}`, part.text);
+      } else if (part.kind === 'file') {
+        // Check kind property
+        const filePart = part as FilePart;
+        console.log(
+          `${partPrefix} ${colorize('blue', '📄 File:')} Name: ${
+            filePart.file.name || 'N/A'
+          }, Type: ${filePart.file.mimeType || 'N/A'}, Source: ${
+            'bytes' in filePart.file ? 'Inline (bytes)' : filePart.file.uri
+          }`
+        );
+      } else if (part.kind === 'data') {
+        // Check kind property
+        const dataPart = part as DataPart;
+        console.log(
+          `${partPrefix} ${colorize('yellow', '📊 Data:')}`,
+          JSON.stringify(dataPart.data, null, 2)
+        );
+      } else {
+        console.log(`${partPrefix} ${colorize('yellow', 'Unsupported part kind:')}`, part);
+      }
+    });
+  }
+
+  // --- Agent Card Fetching ---
+  async function fetchAndDisplayAgentCard() {
+    // Use the client's getAgentCard method.
+    // The client was initialized with serverUrl, which is the agent's base URL.
+    console.log(colorize('dim', `Attempting to fetch agent card from agent at: ${serverUrl}`));
+    try {
+      // client.getAgentCard() uses the agentBaseUrl provided during client construction
+      const card: AgentCard = await client.getAgentCard();
+      agentName = card.name || 'Agent'; // Update global agent name
+      console.log(colorize('green', `✓ Agent Card Found:`));
+      console.log(`  Name:        ${colorize('bright', agentName)}`);
+      if (card.description) {
+        console.log(`  Description: ${card.description}`);
+      }
+      console.log(`  Version:     ${card.version || 'N/A'}`);
+      if (card.capabilities?.streaming) {
+        console.log(`  Streaming:   ${colorize('green', 'Supported')}`);
+      } else {
+        console.log(`  Streaming:   ${colorize('yellow', 'Not Supported (or not specified)')}`);
+      }
+      // Update prompt prefix to use the fetched name
+      // The prompt is set dynamically before each rl.prompt() call in the main loop
+      // to reflect the current agentName if it changes (though unlikely after initial fetch).
+    } catch (error: any) {
+      console.log(colorize('yellow', `⚠️ Error fetching or parsing agent card`));
+      throw error;
+    }
+  }
+
+  // --- Main Loop ---
   console.log(colorize('bright', `A2A Terminal Client`));
   console.log(colorize('dim', `Agent Base URL: ${serverUrl}`));
 
@@ -370,7 +371,7 @@ async function main() {
 }
 
 // --- Start ---
-main().catch((err) => {
+runCli().catch((err) => {
   console.error(colorize('red', 'Unhandled error in main:'), err);
   process.exit(1);
 });
