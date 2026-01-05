@@ -11,7 +11,17 @@ export * from './client/index.js';
 export * from './server/express/index.js';
 
 export { A2AError } from './server/index.js';
+export {
+  AuthenticatedExtendedCardNotConfiguredError,
+  ContentTypeNotSupportedError,
+  InvalidAgentResponseError,
+  PushNotificationNotSupportedError,
+  TaskNotCancelableError,
+  TaskNotFoundError,
+  UnsupportedOperationError,
+} from './client/index.js';
 export type { A2AResponse } from './a2a_response.js';
-export { AGENT_CARD_PATH } from './constants.js';
+export { AGENT_CARD_PATH, HTTP_EXTENSION_HEADER } from './constants.js';
+export { Extensions, type ExtensionURI } from './extensions.js';
 
 export * from './server/utils.js'; // Added this line

@@ -7,21 +7,41 @@ export type { A2AClientOptions } from './client.js';
 export * from './auth-handler.js';
 export {
   AgentCardResolver,
-  AgentCardResolverOptions,
+  type AgentCardResolverOptions,
   DefaultAgentCardResolver,
 } from './card-resolver.js';
-export { Client, ClientConfig, RequestOptions } from './multitransport-client.js';
-export { Transport, TransportFactory } from './transports/transport.js';
+export { Client, type ClientConfig, type RequestOptions } from './multitransport-client.js';
+export type { Transport, TransportFactory } from './transports/transport.js';
 export { ClientFactory, ClientFactoryOptions } from './factory.js';
 export {
   JsonRpcTransport,
   JsonRpcTransportFactory,
-  JsonRpcTransportOptions,
+  type JsonRpcTransportOptions,
 } from './transports/json_rpc_transport.js';
 export {
+  RestTransport,
+  RestTransportFactory,
+  type RestTransportOptions,
+} from './transports/rest_transport.js';
+export type {
   CallInterceptor,
   BeforeArgs,
   AfterArgs,
   ClientCallInput,
   ClientCallResult,
 } from './interceptors.js';
+export {
+  ServiceParameters,
+  type ServiceParametersUpdate,
+  withA2AExtensions,
+} from './service-parameters.js';
+export { ClientCallContext, type ContextUpdate, ClientCallContextKey } from './context.js';
+export {
+  AuthenticatedExtendedCardNotConfiguredError,
+  ContentTypeNotSupportedError,
+  InvalidAgentResponseError,
+  PushNotificationNotSupportedError,
+  TaskNotCancelableError,
+  TaskNotFoundError,
+  UnsupportedOperationError,
+} from '../errors.js';

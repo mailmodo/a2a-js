@@ -1,3 +1,4 @@
+import { AgentCard } from '../types.js';
 import { A2AStreamEventData } from './client.js';
 import { Client } from './multitransport-client.js';
 import { RequestOptions } from './multitransport-client.js';
@@ -22,6 +23,11 @@ export interface BeforeArgs<K extends keyof Client = keyof Client> {
   readonly input: ClientCallInput<K>;
 
   /**
+   * Identifies the agent card cached on the client
+   */
+  readonly agentCard: AgentCard;
+
+  /**
    * If set by the interceptor, stops execution, invokes "after"
    * for executed interceptors and returns the result. Transport is not called.
    */
@@ -39,6 +45,11 @@ export interface AfterArgs<K extends keyof Client = keyof Client> {
    * Payload inside the result object can be modified.
    */
   readonly result: ClientCallResult<K>;
+
+  /**
+   * Identifies the agent card cached on the client
+   */
+  readonly agentCard: AgentCard;
 
   /**
    * If set by the interceptor, stops execution and returns result value,
@@ -81,9 +92,11 @@ export type ClientCallResult<K extends keyof Client = keyof Client> = MethodResu
  * }
  */
 type MethodInput<T, TMembers extends keyof T = keyof T> = {
-  [M in TMembers]: T[M] extends (payload: infer P) => unknown
-    ? { readonly method: M; value: P }
-    : never;
+  [M in TMembers]: T[M] extends (options: RequestOptions | undefined) => unknown
+    ? { readonly method: M; value?: never }
+    : T[M] extends (payload: infer P) => unknown
+      ? { readonly method: M; value: P }
+      : never;
 }[TMembers];
 
 /**

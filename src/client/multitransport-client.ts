@@ -11,6 +11,7 @@ import {
   AgentCard,
 } from '../types.js';
 import { A2AStreamEventData, SendMessageResult } from './client.js';
+import { ClientCallContext } from './context.js';
 import {
   CallInterceptor,
   BeforeArgs,
@@ -18,6 +19,7 @@ import {
   ClientCallResult,
   ClientCallInput,
 } from './interceptors.js';
+import { ServiceParameters } from './service-parameters.js';
 import { Transport } from './transports/transport.js';
 
 export interface ClientConfig {
@@ -50,20 +52,39 @@ export interface RequestOptions {
    */
   signal?: AbortSignal;
 
-  // TODO: propagate extensions
+  /**
+   * A key-value map for passing horizontally applicable context or parameters.
+   * All parameters are passed to the server via underlying transports (e.g. In JsonRPC via Headers).
+   */
+  serviceParameters?: ServiceParameters;
 
   /**
    * Arbitrary data available to interceptors and transport implementation.
    */
-  context?: Map<string, unknown>;
+  context?: ClientCallContext;
 }
 
 export class Client {
   constructor(
     public readonly transport: Transport,
-    public readonly agentCard: AgentCard,
+    private agentCard: AgentCard,
     public readonly config?: ClientConfig
   ) {}
+
+  /**
+   * If the current agent card supports the extended feature, it will try to fetch the extended agent card from the server,
+   * Otherwise it will return the current agent card value.
+   */
+  async getAgentCard(options?: RequestOptions): Promise<AgentCard> {
+    if (this.agentCard.supportsAuthenticatedExtendedCard) {
+      this.agentCard = await this.executeWithInterceptors(
+        { method: 'getAgentCard' },
+        options,
+        (_, options) => this.transport.getExtendedAgentCard(options)
+      );
+    }
+    return this.agentCard;
+  }
 
   /**
    * Sends a message to an agent to initiate a new interaction or to continue an existing one.
@@ -95,6 +116,7 @@ export class Client {
     params = this.applyClientConfig({ params, blocking: true });
     const beforeArgs: BeforeArgs<'sendMessageStream'> = {
       input: { method, value: params },
+      agentCard: this.agentCard,
       options,
     };
     const beforeResult = await this.interceptBefore(beforeArgs);
@@ -103,6 +125,7 @@ export class Client {
       const earlyReturn = beforeResult.earlyReturn.value;
       const afterArgs: AfterArgs<'sendMessageStream'> = {
         result: { method, value: earlyReturn },
+        agentCard: this.agentCard,
         options: beforeArgs.options,
       };
       await this.interceptAfter(afterArgs, beforeResult.executed);
@@ -114,6 +137,7 @@ export class Client {
       const result = await this.transport.sendMessage(beforeArgs.input.value, beforeArgs.options);
       const afterArgs: AfterArgs<'sendMessageStream'> = {
         result: { method, value: result },
+        agentCard: this.agentCard,
         options: beforeArgs.options,
       };
       await this.interceptAfter(afterArgs);
@@ -126,6 +150,7 @@ export class Client {
     )) {
       const afterArgs: AfterArgs<'sendMessageStream'> = {
         result: { method, value: event },
+        agentCard: this.agentCard,
         options: beforeArgs.options,
       };
       await this.interceptAfter(afterArgs);
@@ -239,13 +264,18 @@ export class Client {
   ): AsyncGenerator<A2AStreamEventData, void, undefined> {
     const method = 'resubscribeTask';
 
-    const beforeArgs: BeforeArgs<'resubscribeTask'> = { input: { method, value: params }, options };
+    const beforeArgs: BeforeArgs<'resubscribeTask'> = {
+      input: { method, value: params },
+      agentCard: this.agentCard,
+      options,
+    };
     const beforeResult = await this.interceptBefore(beforeArgs);
 
     if (beforeResult) {
       const earlyReturn = beforeResult.earlyReturn.value;
       const afterArgs: AfterArgs<'resubscribeTask'> = {
         result: { method, value: earlyReturn },
+        agentCard: this.agentCard,
         options: beforeArgs.options,
       };
       await this.interceptAfter(afterArgs, beforeResult.executed);
@@ -259,6 +289,7 @@ export class Client {
     )) {
       const afterArgs: AfterArgs<'resubscribeTask'> = {
         result: { method, value: event },
+        agentCard: this.agentCard,
         options: beforeArgs.options,
       };
       await this.interceptAfter(afterArgs);
@@ -298,6 +329,7 @@ export class Client {
   ): Promise<ClientCallResult<K>['value']> {
     const beforeArgs: BeforeArgs<K> = {
       input: input,
+      agentCard: this.agentCard,
       options,
     };
     const beforeResult = await this.interceptBefore(beforeArgs);
@@ -308,6 +340,7 @@ export class Client {
           method: input.method,
           value: beforeResult.earlyReturn.value,
         } as ClientCallResult<K>,
+        agentCard: this.agentCard,
         options: beforeArgs.options,
       };
       await this.interceptAfter(afterArgs, beforeResult.executed);
@@ -318,6 +351,7 @@ export class Client {
 
     const afterArgs: AfterArgs<K> = {
       result: { method: input.method, value: result } as ClientCallResult<K>,
+      agentCard: this.agentCard,
       options: beforeArgs.options,
     };
     await this.interceptAfter(afterArgs);
@@ -348,10 +382,8 @@ export class Client {
     args: AfterArgs<K>,
     interceptors?: CallInterceptor[]
   ): Promise<void> {
-    if (!this.config?.interceptors || this.config.interceptors.length === 0) {
-      return;
-    }
-    for (const interceptor of interceptors ?? this.config.interceptors) {
+    const reversedInterceptors = [...(interceptors ?? this.config?.interceptors ?? [])].reverse();
+    for (const interceptor of reversedInterceptors) {
       await interceptor.after(args);
       if (args.earlyReturn) {
         return;
