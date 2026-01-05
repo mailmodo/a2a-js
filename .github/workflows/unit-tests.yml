@@ -67,8 +67,12 @@ jobs:
       run: |
         npm ci
         npm run coverage
-        mv coverage/coverage-summary.json ${{ runner.temp }}/coverage-main-summary.json
-    
+        if [ -f coverage/coverage-summary.json ]; then
+          mv coverage/coverage-summary.json ${{ runner.temp }}/coverage-main-summary.json
+        else
+          echo "coverage-summary.json not found on main branch, skipping coverage comparison"
+        fi
+
     - name: Upload Artifact (main)
       uses: actions/upload-artifact@v4
       if: github.event_name != 'pull_request'
@@ -90,21 +94,23 @@ jobs:
         npm ci
         npm run coverage
         mv coverage/coverage-summary.json coverage-pr-summary.json
-        mv ${{ runner.temp }}/coverage-main-summary.json coverage-main-summary.json
-    
+        if [ -f ${{ runner.temp }}/coverage-main-summary.json ]; then
+          mv ${{ runner.temp }}/coverage-main-summary.json coverage-main-summary.json
+        else
+          echo "Main branch coverage summary not available, skipping comparison"
+        fi
+
     - name: Save PR number
       run: |
         echo ${{ github.event.number }} > ./PR_NUMBER
-    
+
     - name: Upload Coverage Artifacts
       uses: actions/upload-artifact@v4
       if: github.event_name == 'pull_request'
       with:
         name: coverage-data
         path: |
-          coverage-main-summary.json
-          coverage-pr-summary.json
+          coverage-*.json
           coverage/
           PR_NUMBER
         retention-days: 1
-
