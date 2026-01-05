@@ -1,4 +1,4 @@
-# A2A JavaScript SDK
+# A2A JavaScript SDK - Mailmodo Edition
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -13,23 +13,50 @@
 
 <!-- markdownlint-enable no-inline-html -->
 
+> **Note**: This is Mailmodo's customized fork of the [official A2A JavaScript SDK](https://github.com/a2aproject/a2a-js). Key differences:
+> - **Dual Module Support**: Supports both **CommonJS** and **ESM** (upstream only supports ESM)
+> - **Backwards Compatibility**: Works with older TypeScript configurations using `typesVersions`
+
 ## Installation
 
-You can install the A2A SDK using `npm`.
+You can install the Mailmodo A2A SDK using `npm`.
 
 ```bash
-npm install @a2a-js/sdk
+npm install @mailmodo/a2a
 ```
 
 ### For Server Usage
 
-If you plan to use the Express integration (imports from `@a2a-js/sdk/server/express`) for A2A server, you'll also need to install Express as it's a peer dependency:
+If you plan to use the Express integration (imports from `@mailmodo/a2a/server/express`) for A2A server, you'll also need to install Express as it's a peer dependency:
 
 ```bash
 npm install express
 ```
 
-You can also find some samples [here](https://github.com/a2aproject/a2a-js/tree/main/src/samples).
+You can also find some samples [here](https://github.com/mailmodo/a2a-js/tree/main/src/samples).
+
+---
+
+## Module System Compatibility
+
+This package supports both **CommonJS** and **ESM** module systems:
+
+### CommonJS (Node.js)
+```javascript
+const { Task, Message } = require('@mailmodo/a2a');
+const { DefaultRequestHandler } = require('@mailmodo/a2a/server');
+const { A2AExpressApp } = require('@mailmodo/a2a/server/express');
+const { ClientFactory } = require('@mailmodo/a2a/client');
+```
+
+### ESM (ES Modules)
+```javascript
+import { Task, Message } from '@mailmodo/a2a';
+import { DefaultRequestHandler } from '@mailmodo/a2a/server';
+import { A2AExpressApp } from '@mailmodo/a2a/server/express';
+import { ClientFactory } from '@mailmodo/a2a/client';
+```
+
 
 ---
 
@@ -55,15 +82,15 @@ The core of an A2A server is the `AgentExecutor`, which contains your agent's lo
 // server.ts
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { AgentCard, Message, AGENT_CARD_PATH } from '@a2a-js/sdk';
+import { AgentCard, Message, AGENT_CARD_PATH } from '@mailmodo/a2a';
 import {
   AgentExecutor,
   RequestContext,
   ExecutionEventBus,
   DefaultRequestHandler,
   InMemoryTaskStore,
-} from '@a2a-js/sdk/server';
-import { agentCardHandler, jsonRpcHandler, restHandler, UserBuilder } from '@a2a-js/sdk/server/express';
+} from '@mailmodo/a2a/server';
+import { agentCardHandler, jsonRpcHandler, restHandler, UserBuilder } from '@mailmodo/a2a/server/express';
 
 // 1. Define your agent's identity card.
 const helloAgentCard: AgentCard = {
@@ -131,8 +158,8 @@ The [`ClientFactory`](src/client/factory.ts) makes it easy to communicate with a
 
 ```typescript
 // client.ts
-import { ClientFactory } from '@a2a-js/sdk/client';
-import { Message, MessageSendParams, SendMessageSuccessResponse } from '@a2a-js/sdk';
+import { ClientFactory } from '@mailmodo/a2a/client';
+import { Message, MessageSendParams, SendMessageSuccessResponse } from '@mailmodo/a2a';
 import { v4 as uuidv4 } from 'uuid';
 
 async function run() {
@@ -175,7 +202,7 @@ This agent creates a task, attaches a file artifact to it, and marks it as compl
 
 ```typescript
 // server.ts
-import { Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk';
+import { Task, TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@mailmodo/a2a';
 // ... other imports from the quickstart server ...
 
 class TaskExecutor implements AgentExecutor {
@@ -232,8 +259,8 @@ The client sends a message and receives a `Task` object as the result.
 
 ```typescript
 // client.ts
-import { ClientFactory } from '@a2a-js/sdk/client';
-import { Message, MessageSendParams, SendMessageSuccessResponse, Task } from '@a2a-js/sdk';
+import { ClientFactory } from '@mailmodo/a2a/client';
+import { Message, MessageSendParams, SendMessageSuccessResponse, Task } from '@mailmodo/a2a';
 // ... other imports ...
 
 const factory = new ClientFactory();
@@ -288,7 +315,7 @@ This example defines a `CallInterceptor` to update `serviceParameters` which are
 
 ```typescript
 import { v4 as uuidv4 } from 'uuid';
-import { AfterArgs, BeforeArgs, CallInterceptor, ClientFactory, ClientFactoryOptions } from '@a2a-js/sdk/client';
+import { AfterArgs, BeforeArgs, CallInterceptor, ClientFactory, ClientFactoryOptions } from '@mailmodo/a2a/client';
 
 // 1. Define an interceptor
 class RequestIdInterceptor implements CallInterceptor {
@@ -332,7 +359,7 @@ await client.sendMessage({
 Each client method can be configured with an optional `signal` field.
 
 ```typescript
-import { ClientFactory } from '@a2a-js/sdk/client';
+import { ClientFactory } from '@mailmodo/a2a/client';
 
 const factory = new ClientFactory();
 
@@ -368,7 +395,7 @@ import {
   JsonRpcTransportFactory,
   AuthenticationHandler,
   createAuthenticatingFetchWithRetry,
-} from '@a2a-js/sdk/client';
+} from '@mailmodo/a2a/client';
 
 // A simple token provider that simulates fetching a new token.
 const tokenProvider = {
@@ -487,8 +514,8 @@ The `sendMessageStream` method returns an `AsyncGenerator` that yields events as
 
 ```typescript
 // client.ts
-import { ClientFactory } from '@a2a-js/sdk/client';
-import { MessageSendParams } from '@a2a-js/sdk';
+import { ClientFactory } from '@mailmodo/a2a/client';
+import { MessageSendParams } from '@mailmodo/a2a';
 import { v4 as uuidv4 } from 'uuid';
 // ... other imports ...
 
@@ -546,7 +573,7 @@ import {
   RequestContext,
   ExecutionEventBus,
   TaskStatusUpdateEvent,
-} from '@a2a-js/sdk/server';
+} from '@mailmodo/a2a/server';
 // ... other imports ...
 
 class CancellableExecutor implements AgentExecutor {
@@ -645,7 +672,7 @@ import {
   DefaultRequestHandler,
   InMemoryPushNotificationStore,
   DefaultPushNotificationSender,
-} from '@a2a-js/sdk/server';
+} from '@mailmodo/a2a/server';
 
 // Optional: Custom push notification store and sender
 const pushNotificationStore = new InMemoryPushNotificationStore();
@@ -718,8 +745,12 @@ app.post('/webhook/task-updates', (req, res) => {
 
 ## License
 
-This project is licensed under the terms of the [Apache 2.0 License](https://raw.githubusercontent.com/google-a2a/a2a-python/refs/heads/main/LICENSE).
+This project is licensed under the terms of the [Apache 2.0 License](LICENSE).
 
-## Contributing
+## Upstream & Contributing
 
-See [CONTRIBUTING.md](https://github.com/google-a2a/a2a-js/blob/main/CONTRIBUTING.md) for contribution guidelines.
+This is a customized fork of the [official A2A JavaScript SDK](https://github.com/a2aproject/a2a-js) maintained by Mailmodo.
+
+For contributing to the upstream project, see the [upstream CONTRIBUTING.md](https://github.com/a2aproject/a2a-js/blob/main/CONTRIBUTING.md).
+
+For issues or contributions specific to this Mailmodo edition, please contact the Mailmodo team.
